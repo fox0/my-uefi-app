@@ -7,3 +7,6 @@ edition = "2024"
 acpi = "5.2"
 log = "0.4"
 uefi = { version = "0.35", features = ["logger", "panic_handler", "global_allocator"] }
+
+[lints.clippy]
+uninlined_format_args = "allow"
