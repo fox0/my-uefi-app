@@ -44,7 +44,8 @@ fn get_acpi_address() -> usize {
 fn find_acpi() {
     let acpi_address = get_acpi_address();
 
-    let rsdp = unsafe { *(acpi_address as *mut Rsdp) };
+    let rsdp = acpi_address as *mut Rsdp;
+    let rsdp = unsafe { rsdp.as_ref() }.unwrap();
     rsdp.validate().expect("invalid RSDP");
     println!("RSDP = {:?}", rsdp);
 
@@ -58,9 +59,10 @@ fn find_acpi() {
     // If the pointer to the XSDT is valid, the OS MUST use the XSDT.
     let xsdt_address = rsdp.xsdt_address() as usize;
 
-    let ttt = unsafe { *(xsdt_address as *mut SdtHeader) };
-    println!("ttt = {:?}", ttt);
-    println!("ttt = {:?}", ttt.validate(Signature::XSDT)); // TODO SdtInvalidChecksum
+    let xsdt = xsdt_address as *mut SdtHeader;
+    let xsdt = unsafe { xsdt.as_ref() }.unwrap();
+    xsdt.validate(Signature::XSDT).expect("invalid XSDT");
+    println!("XSDT = {:?}", xsdt);
 }
 
 #[entry]
