@@ -1,0 +1,2 @@
+OVMF_*.fd
+esp/efi/boot/bootx64.efi

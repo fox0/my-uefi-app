@@ -1,0 +1,9 @@
+[package]
+name = "my-uefi-app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+acpi = "5.2"
+log = "0.4"
+uefi = { version = "0.35", features = ["logger", "panic_handler", "global_allocator"] }
