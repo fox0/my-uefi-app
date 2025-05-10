@@ -3,7 +3,7 @@ SRC=$(shell find src -name '*.rs')
 run: esp/efi/boot/bootx64.efi OVMF_CODE.fd OVMF_VARS.fd
 	qemu-system-x86_64 \
 		-enable-kvm \
-		-machine i8042=on \
+		-machine q35,i8042=on \
 		-drive if=pflash,format=raw,readonly=on,file=OVMF_CODE.fd \
 		-drive if=pflash,format=raw,readonly=on,file=OVMF_VARS.fd \
 		-drive format=raw,file=fat:rw:esp
