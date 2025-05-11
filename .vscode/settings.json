@@ -1,0 +1,13 @@
+{
+    "cSpell.words": [
+        // rust
+        "clippy",
+        "repr",
+        "uninlined",
+        // other
+        "acpi",
+        "fadt",
+        "iapc",
+        "uefi"
+    ]
+}

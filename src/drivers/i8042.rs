@@ -29,7 +29,7 @@ impl Driver for I8042 {
         let fadt = fadt_raw().expect("no init FADT");
         let fadt = unsafe { fadt.as_ref() };
 
-        // Step 1: Initialise USB Controllers
+        // Step 1: Initialize USB Controllers
 
         // Step 2: Determine if the PS/2 Controller Exists
         let flags = fadt.iapc_boot_arch;
