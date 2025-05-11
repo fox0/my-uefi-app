@@ -2,7 +2,7 @@
 //!
 //! # Example
 //!
-//! ```
+//! ```rust,not_run
 //! use crate::fox_port::{
 //!     Port, PortGeneric, PortReadOnly, PortWriteOnly, ReadOnlyAccess, ReadWriteAccess,
 //!     WriteOnlyAccess,
@@ -60,6 +60,7 @@ impl<T: PortRead, A: PortReadAccess> PortGeneric<T, A> {
     /// This function is unsafe because the I/O port could have side effects that violate memory
     /// safety.
     #[inline]
+    #[must_use]
     pub unsafe fn read(&self) -> T {
         unsafe { T::read_from_port(self.port) }
     }
@@ -78,22 +79,25 @@ impl<T: PortWrite, A: PortWriteAccess> PortGeneric<T, A> {
     }
 }
 
-// compile test only
 // #[cfg(test)]
-#[allow(dead_code)]
-#[allow(clippy::assertions_on_constants)]
 mod tests {
     use super::*;
 
-    const DATA_PORT: PortGeneric<u8, ReadWriteAccess> = Port::<u8>::new(0x0060);
-    const COMMAND_REGISTER: PortGeneric<u8, WriteOnlyAccess> = PortWriteOnly::<u8>::new(0x0064);
-    const STATUS_REGISTER: PortGeneric<u8, ReadOnlyAccess> = PortReadOnly::<u8>::new(0x0064);
-
-    fn compile_test() {
+    #[deny(const_item_mutation)]
+    #[allow(dead_code)]
+    #[allow(clippy::assertions_on_constants)]
+    fn deny_const_item_mutation_compile_test() {
         assert!(false, "compile test only");
-        let _ = unsafe { DATA_PORT.read() };
-        unsafe { DATA_PORT.write(0x42) };
-        unsafe { COMMAND_REGISTER.write(0x42) };
-        let _ = unsafe { STATUS_REGISTER.read() };
+
+        const DATA_PORT: PortGeneric<u8, ReadWriteAccess> = Port::<u8>::new(0x0060);
+        const COMMAND_REGISTER: PortGeneric<u8, WriteOnlyAccess> = PortWriteOnly::<u8>::new(0x0064);
+        const STATUS_REGISTER: PortGeneric<u8, ReadOnlyAccess> = PortReadOnly::<u8>::new(0x0064);
+
+        unsafe {
+            let _ = DATA_PORT.read();
+            DATA_PORT.write(0x42);
+            COMMAND_REGISTER.write(0x42);
+            let _ = STATUS_REGISTER.read();
+        }
     }
 }

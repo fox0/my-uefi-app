@@ -1,3 +1,5 @@
+#![cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+
 //! I8042 PS/2 Controller
 //!
 //! * [`CommandRegister`]
@@ -10,17 +12,12 @@ use core::fmt;
 
 use bit_field::BitField;
 
+use super::Driver;
 use crate::fox_acpi::fadt_raw;
 use crate::fox_port::{
     Port, PortGeneric, PortReadOnly, PortWriteOnly, ReadOnlyAccess, ReadWriteAccess,
     WriteOnlyAccess,
 };
-
-pub trait Driver {
-    fn probe() -> Result<(), ()>;
-    fn init();
-    fn remove();
-}
 
 /// I8042 PS/2 Controller
 pub struct I8042;
@@ -64,6 +61,19 @@ impl Driver for I8042 {
         // todo!()
     }
 }
+
+// // An example interrupt based on https://os.phil-opp.com/hardware-interrupts/. The ps2 mouse is configured to fire
+// // interrupts at PIC offset 12.
+// extern "x86-interrupt" fn mouse_interrupt_handler(_stack_frame: &mut InterruptStackFrame) {
+//     let mut port = PortReadOnly::new(0x60);
+//     let packet = unsafe { port.read() };
+//     MOUSE.lock().process_packet(packet);
+
+//     unsafe {
+//         PICS.lock()
+//             .notify_end_of_interrupt(InterruptIndex::Mouse.into());
+//     }
+// }
 
 struct CommandRegister;
 

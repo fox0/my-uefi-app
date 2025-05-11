@@ -10,5 +10,8 @@ log = "0.4"
 uefi = { version = "0.35", features = ["logger", "panic_handler", "global_allocator"] }
 x86_64 = "0.15"
 
+[lints.rust]
+const_item_mutation = "deny"
+
 [lints.clippy]
 uninlined_format_args = "allow"
