@@ -1,13 +1,20 @@
 {
     "cSpell.words": [
-        // rust
-        "clippy",
-        "repr",
-        "uninlined",
-        // other
         "acpi",
+        "bootx",
+        "clippy",
         "fadt",
         "iapc",
-        "uefi"
+        "OVMF",
+        "pflash",
+        "repr",
+        "uefi",
+        "uninlined",
+        "rsdp",
+        "Virt",
+        "rsdt",
+        "xsdt",
+        "ACPISDT",
+        "outb"
     ]
 }
