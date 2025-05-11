@@ -21,7 +21,6 @@ pub fn fadt_raw() -> Option<NonNull<Fadt>> {
 
 pub fn init_fadt() {
     // log::trace!("init_fadt");
-
     let rsdp = rsdp_raw().expect("no init ACPI");
     let rsdp = unsafe { rsdp.as_ref() };
 

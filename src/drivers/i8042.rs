@@ -1,8 +1,11 @@
 #![cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 
 //! I8042 PS/2 Controller
-
-// https://wiki.osdev.org/I8042_PS/2_Controller
+//!
+//! https://wiki.osdev.org/I8042_PS/2_Controller
+//!
+//! TODO:
+//! - [`port::PortDataPort::read`] - spinlock
 
 use core::fmt;
 
@@ -46,13 +49,13 @@ impl Driver for I8042 {
 
         // Step 4: Flush The Output Buffer
         // log::trace!("step 4");
-        while port::PortDataPort::read().is_some() {}
+        while port::PortDataPort::try_read().is_some() {}
 
         // Step 5: Set the Controller Configuration Byte
         // log::trace!("step 5");
         let mut config = port::PortCommandRegister::get_controller_configuration_byte();
         // log::debug!("{:?}", config);
-        assert_eq!(config.system_flag(), true);
+        assert!(config.system_flag());
         config.set_first_port_interrupt_is_enable(false);
         config.set_second_port_interrupt_is_enable(false);
         config.set_first_port_clock_disabled(true);
@@ -69,6 +72,16 @@ impl Driver for I8042 {
 
         // Step 7: Determine If There Are 2 Channels
         log::trace!("step 7");
+        port::PortCommandRegister::enable_second_port();
+        let cfg = port::PortCommandRegister::get_controller_configuration_byte();
+        // TODO сохранять во внутреннем состоянии драйвера!
+        assert!(!cfg.second_port_clock_disabled());
+        const IS_DUAL: bool = true;
+        port::PortCommandRegister::disable_second_port();
+        port::PortCommandRegister::set_controller_configuration_byte(config);
+
+        // Step 8: Perform Interface Tests
+        log::trace!("step 8");
 
         // todo!()
     }
@@ -132,51 +145,53 @@ mod dto {
     pub struct ControllerConfigurationByte(pub u8);
 }
 
+#[allow(dead_code)]
 impl port::PortCommandRegister {
     const PORT: PortGeneric<u8, WriteOnlyAccess> = PortWriteOnly::<u8>::new(0x0064);
 
     pub fn disable_first_port() {
-        log::trace!(
-            "port_write(0x64, {:#02x})",
-            dto::Commands::DisableFirstPort as u8
-        );
-        unsafe { Self::PORT.write(dto::Commands::DisableFirstPort.into()) };
+        Self::write(dto::Commands::DisableFirstPort.into());
         // Response Byte: None
     }
 
     pub fn disable_second_port() {
-        log::trace!(
-            "port_write(0x64, {:#02x})",
-            dto::Commands::DisableSecondPort as u8
-        );
-        unsafe { Self::PORT.write(dto::Commands::DisableSecondPort.into()) };
+        Self::write(dto::Commands::DisableSecondPort.into());
+        // Response Byte: None
+    }
+
+    pub fn enable_first_port() {
+        Self::write(dto::Commands::EnableFirstPort.into());
+        // Response Byte: None
+    }
+
+    pub fn enable_second_port() {
+        Self::write(dto::Commands::EnableSecondPort.into());
         // Response Byte: None
     }
 
     pub fn get_controller_configuration_byte() -> dto::ControllerConfigurationByte {
-        log::trace!("port_write(0x64, {:#02x})", dto::Commands::ReadByte0 as u8);
-        unsafe { Self::PORT.write(dto::Commands::ReadByte0.into()) };
-        dto::ControllerConfigurationByte(port::PortDataPort::read().unwrap())
+        Self::write(dto::Commands::ReadByte0.into());
+        dto::ControllerConfigurationByte(unsafe { port::PortDataPort::read() })
     }
 
     pub fn set_controller_configuration_byte(config: dto::ControllerConfigurationByte) {
-        log::trace!("port_write(0x64, {:#02x})", dto::Commands::WriteByte0 as u8);
-        unsafe { Self::PORT.write(dto::Commands::WriteByte0.into()) };
+        Self::write(dto::Commands::WriteByte0.into());
         port::PortDataPort::write(config.into());
         // Response Byte: None
     }
 
     pub fn test_controller() -> Result<(), ()> {
-        log::trace!(
-            "port_write(0x64, {:#02x})",
-            dto::Commands::TestController as u8
-        );
-        unsafe { Self::PORT.write(dto::Commands::TestController.into()) };
-        match port::PortDataPort::read().unwrap() {
+        Self::write(dto::Commands::TestController.into());
+        match unsafe { port::PortDataPort::read() } {
             0x55 => Ok(()),
             0xFC => Err(()),
             _ => Err(()),
         }
+    }
+
+    fn write(value: u8) {
+        log::trace!("port_write(0x64, {:#02x})", value);
+        unsafe { Self::PORT.write(value) };
     }
 }
 
@@ -192,7 +207,21 @@ impl port::PortStatusRegister {
 impl port::PortDataPort {
     const PORT: PortGeneric<u8, ReadWriteAccess> = Port::<u8>::new(0x0060);
 
-    fn read() -> Option<u8> {
+    pub unsafe fn read() -> u8 {
+        // TODO spinlock
+        let mut count = 0;
+        loop {
+            if let Some(value) = Self::try_read() {
+                return value;
+            }
+            count += 1;
+            if count > 2 {
+                panic!("spinlock");
+            }
+        }
+    }
+
+    pub fn try_read() -> Option<u8> {
         // must be set before attempting to read data from IO port 0x60
         if port::PortStatusRegister::read().output_buffer_is_full() {
             log::trace!("port_read(0x60)");
@@ -202,7 +231,7 @@ impl port::PortDataPort {
         }
     }
 
-    fn write(value: u8) {
+    pub fn write(value: u8) {
         log::trace!("port_write(0x60, {:#02x})", value);
         unsafe { Self::PORT.write(value) };
     }
