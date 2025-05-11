@@ -76,9 +76,9 @@ impl Driver for I8042 {
         port::PortCommandRegister::enable_second_port();
         let cfg = port::PortCommandRegister::get_controller_configuration_byte();
         // TODO сохранять во внутреннем состоянии драйвера!
-        let mut is_dual = false;
+        let mut is_exists_second_port = false;
         if !cfg.second_port_clock_disabled() {
-            is_dual = true;
+            is_exists_second_port = true;
             // выключаем обратно
             port::PortCommandRegister::disable_second_port();
             port::PortCommandRegister::set_controller_configuration_byte(config);
@@ -88,12 +88,20 @@ impl Driver for I8042 {
         log::trace!("step 8");
         // At this stage, check to see how many PS/2 ports are left.
         port::PortCommandRegister::test_first_port().expect("test failed");
-        if is_dual {
+        if is_exists_second_port {
             port::PortCommandRegister::test_second_port().expect("test failed");
         }
 
         // Step 9: Enable Devices
         log::trace!("step 9");
+        port::PortCommandRegister::enable_first_port();
+        // config.set_first_port_interrupt_is_enable(false);
+        if is_exists_second_port {
+            port::PortCommandRegister::enable_second_port();
+            // config.set_second_port_interrupt_is_enable(false);
+        }
+
+        // Step 10: Reset Devices
 
         // todo!()
     }
@@ -185,7 +193,7 @@ impl port::PortCommandRegister {
     }
 
     pub fn get_controller_configuration_byte() -> dto::ControllerConfigurationByte {
-         log::trace!("PortCommandRegister::get_controller_configuration_byte");
+        log::trace!("PortCommandRegister::get_controller_configuration_byte");
         Self::write(dto::Commands::ReadByte0.into());
         dto::ControllerConfigurationByte(unsafe { port::PortDataPort::read() })
     }
