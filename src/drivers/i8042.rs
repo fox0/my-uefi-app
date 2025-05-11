@@ -65,23 +65,35 @@ impl Driver for I8042 {
         // log::debug!("{:?}", config);
 
         // Step 6: Perform Controller Self Test
-        // log::trace!("step 6");
-        assert!(port::PortCommandRegister::test_controller().is_ok());
+        log::trace!("step 6");
+        port::PortCommandRegister::test_controller().expect("test failed");
         // This can reset the PS/2 controller on some hardware (tested on a 2016 laptop).
         port::PortCommandRegister::set_controller_configuration_byte(config);
 
         // Step 7: Determine If There Are 2 Channels
         log::trace!("step 7");
+        // пробуем включить порт 2
         port::PortCommandRegister::enable_second_port();
         let cfg = port::PortCommandRegister::get_controller_configuration_byte();
         // TODO сохранять во внутреннем состоянии драйвера!
-        assert!(!cfg.second_port_clock_disabled());
-        const IS_DUAL: bool = true;
-        port::PortCommandRegister::disable_second_port();
-        port::PortCommandRegister::set_controller_configuration_byte(config);
+        let mut is_dual = false;
+        if !cfg.second_port_clock_disabled() {
+            is_dual = true;
+            // выключаем обратно
+            port::PortCommandRegister::disable_second_port();
+            port::PortCommandRegister::set_controller_configuration_byte(config);
+        }
 
         // Step 8: Perform Interface Tests
         log::trace!("step 8");
+        // At this stage, check to see how many PS/2 ports are left.
+        port::PortCommandRegister::test_first_port().expect("test failed");
+        if is_dual {
+            port::PortCommandRegister::test_second_port().expect("test failed");
+        }
+
+        // Step 9: Enable Devices
+        log::trace!("step 9");
 
         // todo!()
     }
@@ -126,10 +138,13 @@ mod dto {
         DisableSecondPort = 0xA7,
         /// Enable second PS/2 port (only if 2 PS/2 ports supported)
         EnableSecondPort = 0xA8,
-        // ...
+        /// Test second PS/2 port (only if 2 PS/2 ports supported)
+        TestSecondPort = 0xA9,
         /// Test PS/2 Controller
         TestController = 0xAA,
-        // ...
+        /// Test first PS/2 port
+        TestFirstPort = 0xAB,
+        // 0xAC Diagnostic dump (read all bytes of internal RAM). Response Byte: Unknown
         /// Disable first PS/2 port
         DisableFirstPort = 0xAD,
         /// Enable first PS/2 port
@@ -170,6 +185,7 @@ impl port::PortCommandRegister {
     }
 
     pub fn get_controller_configuration_byte() -> dto::ControllerConfigurationByte {
+         log::trace!("PortCommandRegister::get_controller_configuration_byte");
         Self::write(dto::Commands::ReadByte0.into());
         dto::ControllerConfigurationByte(unsafe { port::PortDataPort::read() })
     }
@@ -185,6 +201,27 @@ impl port::PortCommandRegister {
         match unsafe { port::PortDataPort::read() } {
             0x55 => Ok(()),
             0xFC => Err(()),
+            _ => Err(()),
+        }
+    }
+
+    pub fn test_first_port() -> Result<(), ()> {
+        Self::write(dto::Commands::TestFirstPort.into());
+        Self::test_port()
+    }
+
+    pub fn test_second_port() -> Result<(), ()> {
+        Self::write(dto::Commands::TestSecondPort.into());
+        Self::test_port()
+    }
+
+    fn test_port() -> Result<(), ()> {
+        match unsafe { port::PortDataPort::read() } {
+            0x00 => Ok(()),
+            0x01 => Err(()), // clock line stuck
+            0x02 => Err(()), // clock line stuck high
+            0x03 => Err(()), // data line stuck low
+            0x04 => Err(()), // data line stuck high
             _ => Err(()),
         }
     }
