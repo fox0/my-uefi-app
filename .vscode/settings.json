@@ -1,20 +1,21 @@
 {
     "cSpell.words": [
         "acpi",
+        "ACPISDT",
         "bootx",
+        "chipset",
         "clippy",
         "fadt",
         "iapc",
+        "outb",
         "OVMF",
         "pflash",
         "repr",
+        "rsdp",
+        "rsdt",
         "uefi",
         "uninlined",
-        "rsdp",
         "Virt",
-        "rsdt",
-        "xsdt",
-        "ACPISDT",
-        "outb"
+        "xsdt"
     ]
 }
