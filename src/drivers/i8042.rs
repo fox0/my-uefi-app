@@ -102,6 +102,12 @@ impl Driver for I8042 {
         }
 
         // Step 10: Reset Devices
+        port::PortCommandRegister::send_to_device_first_port(dto::DeviceCommands::Reset)
+            .expect("reset failed");
+        if is_exists_second_port {
+            port::PortCommandRegister::send_to_device_second_port(dto::DeviceCommands::Reset)
+                .expect("reset failed");
+        }
 
         // todo!()
     }
@@ -134,7 +140,7 @@ mod port {
 mod dto {
     #[repr(u8)]
     #[derive(Copy, Clone)]
-    pub enum Commands {
+    pub enum ControllerCommands {
         /// Read "byte 0" from internal RAM [`ControllerConfigurationByte`]
         ReadByte0 = 0x20,
         // 0x21 to 0x3F Read "byte N" from internal RAM (where 'N' is the command byte & 0x1F).
@@ -158,6 +164,17 @@ mod dto {
         /// Enable first PS/2 port
         EnableFirstPort = 0xAE,
         // ...
+        /// Write next byte to second PS/2 port input buffer (only if 2 PS/2 ports supported)
+        /// (sends next byte to the second PS/2 port)
+        WriteByteInputSecondPort = 0xD4,
+        // ...
+    }
+
+    #[repr(u8)]
+    #[derive(Copy, Clone)]
+    pub enum DeviceCommands {
+        /// Reset command, supported by all PS/2 devices
+        Reset = 0xFF,
     }
 
     /// The Status Register contains various flags that show the state of the PS/2 controller
@@ -173,39 +190,40 @@ impl port::PortCommandRegister {
     const PORT: PortGeneric<u8, WriteOnlyAccess> = PortWriteOnly::<u8>::new(0x0064);
 
     pub fn disable_first_port() {
-        Self::write(dto::Commands::DisableFirstPort.into());
+        Self::write(dto::ControllerCommands::DisableFirstPort.into());
         // Response Byte: None
     }
 
     pub fn disable_second_port() {
-        Self::write(dto::Commands::DisableSecondPort.into());
+        Self::write(dto::ControllerCommands::DisableSecondPort.into());
         // Response Byte: None
     }
 
     pub fn enable_first_port() {
-        Self::write(dto::Commands::EnableFirstPort.into());
+        Self::write(dto::ControllerCommands::EnableFirstPort.into());
         // Response Byte: None
     }
 
     pub fn enable_second_port() {
-        Self::write(dto::Commands::EnableSecondPort.into());
+        Self::write(dto::ControllerCommands::EnableSecondPort.into());
         // Response Byte: None
     }
 
     pub fn get_controller_configuration_byte() -> dto::ControllerConfigurationByte {
         log::trace!("PortCommandRegister::get_controller_configuration_byte");
-        Self::write(dto::Commands::ReadByte0.into());
+        Self::write(dto::ControllerCommands::ReadByte0.into());
+        // TODO spinlock
         dto::ControllerConfigurationByte(unsafe { port::PortDataPort::read() })
     }
 
     pub fn set_controller_configuration_byte(config: dto::ControllerConfigurationByte) {
-        Self::write(dto::Commands::WriteByte0.into());
+        Self::write(dto::ControllerCommands::WriteByte0.into());
         port::PortDataPort::write(config.into());
         // Response Byte: None
     }
 
     pub fn test_controller() -> Result<(), ()> {
-        Self::write(dto::Commands::TestController.into());
+        Self::write(dto::ControllerCommands::TestController.into());
         match unsafe { port::PortDataPort::read() } {
             0x55 => Ok(()),
             0xFC => Err(()),
@@ -214,12 +232,12 @@ impl port::PortCommandRegister {
     }
 
     pub fn test_first_port() -> Result<(), ()> {
-        Self::write(dto::Commands::TestFirstPort.into());
+        Self::write(dto::ControllerCommands::TestFirstPort.into());
         Self::test_port()
     }
 
     pub fn test_second_port() -> Result<(), ()> {
-        Self::write(dto::Commands::TestSecondPort.into());
+        Self::write(dto::ControllerCommands::TestSecondPort.into());
         Self::test_port()
     }
 
@@ -230,6 +248,26 @@ impl port::PortCommandRegister {
             0x02 => Err(()), // clock line stuck high
             0x03 => Err(()), // data line stuck low
             0x04 => Err(()), // data line stuck high
+            _ => Err(()),
+        }
+    }
+
+    pub fn send_to_device_first_port(value: dto::DeviceCommands) -> Result<(), ()> {
+        log::trace!("PortCommandRegister::send_to_device_first_port");
+        Self::send_to_device(value)
+    }
+
+    pub fn send_to_device_second_port(value: dto::DeviceCommands) -> Result<(), ()> {
+        log::trace!("PortCommandRegister::send_to_device_second_port");
+        Self::write(dto::ControllerCommands::WriteByteInputSecondPort.into());
+        Self::send_to_device(value)
+    }
+
+    fn send_to_device(value: dto::DeviceCommands) -> Result<(), ()> {
+        port::PortDataPort::write(value.into());
+        // If the response is 0xFA, 0xAA (Note: the order in which devices send these two seems to be ambiguous)
+        match unsafe { (port::PortDataPort::read(), port::PortDataPort::read()) } {
+            (0xFA, 0xAA) => Ok(()),
             _ => Err(()),
         }
     }
@@ -260,8 +298,8 @@ impl port::PortDataPort {
                 return value;
             }
             count += 1;
-            if count > 2 {
-                panic!("spinlock");
+            if count > 10 {
+                panic!("read_spinlock");
             }
         }
     }
@@ -277,13 +315,30 @@ impl port::PortDataPort {
     }
 
     pub fn write(value: u8) {
-        log::trace!("port_write(0x60, {:#02x})", value);
-        unsafe { Self::PORT.write(value) };
+        // TODO spinlock
+        let mut count = 0;
+        loop {
+            if !port::PortStatusRegister::read().input_buffer_is_full() {
+                log::trace!("port_write(0x60, {:#02x})", value);
+                unsafe { Self::PORT.write(value) };
+                break;
+            }
+            count += 1;
+            if count > 10 {
+                panic!("write_spinlock");
+            }
+        }
     }
 }
 
-impl From<dto::Commands> for u8 {
-    fn from(value: dto::Commands) -> Self {
+impl From<dto::ControllerCommands> for u8 {
+    fn from(value: dto::ControllerCommands) -> Self {
+        value as _
+    }
+}
+
+impl From<dto::DeviceCommands> for u8 {
+    fn from(value: dto::DeviceCommands) -> Self {
         value as _
     }
 }
