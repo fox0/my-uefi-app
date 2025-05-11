@@ -21,7 +21,6 @@ pub struct I8042;
 impl Driver for I8042 {
     fn probe() -> Result<(), ()> {
         // log::trace!("I8042::probe()");
-
         let fadt = fadt_raw().expect("no init FADT");
         let fadt = unsafe { fadt.as_ref() };
 
@@ -39,16 +38,21 @@ impl Driver for I8042 {
     }
 
     fn init() {
+        log::trace!("I8042::init()");
         // Step 3: Disable Devices
+        // log::trace!("step 3");
         port::PortCommandRegister::disable_first_port();
         port::PortCommandRegister::disable_second_port();
 
         // Step 4: Flush The Output Buffer
+        // log::trace!("step 4");
         while port::PortDataPort::read().is_some() {}
 
         // Step 5: Set the Controller Configuration Byte
+        // log::trace!("step 5");
         let mut config = port::PortCommandRegister::get_controller_configuration_byte();
         // log::debug!("{:?}", config);
+        assert_eq!(config.system_flag(), true);
         config.set_first_port_interrupt_is_enable(false);
         config.set_second_port_interrupt_is_enable(false);
         config.set_first_port_clock_disabled(true);
@@ -57,10 +61,20 @@ impl Driver for I8042 {
         // let config = port::PortCommandRegister::get_controller_configuration_byte();
         // log::debug!("{:?}", config);
 
+        // Step 6: Perform Controller Self Test
+        // log::trace!("step 6");
+        assert!(port::PortCommandRegister::test_controller().is_ok());
+        // This can reset the PS/2 controller on some hardware (tested on a 2016 laptop).
+        port::PortCommandRegister::set_controller_configuration_byte(config);
+
+        // Step 7: Determine If There Are 2 Channels
+        log::trace!("step 7");
+
         // todo!()
     }
 
     fn remove() {
+        log::trace!("I8042::remove()");
         // todo!()
     }
 }
@@ -85,8 +99,8 @@ mod port {
 }
 
 mod dto {
-    #[allow(dead_code)]
     #[repr(u8)]
+    #[derive(Copy, Clone)]
     pub enum Commands {
         /// Read "byte 0" from internal RAM [`ControllerConfigurationByte`]
         ReadByte0 = 0x20,
@@ -100,6 +114,9 @@ mod dto {
         /// Enable second PS/2 port (only if 2 PS/2 ports supported)
         EnableSecondPort = 0xA8,
         // ...
+        /// Test PS/2 Controller
+        TestController = 0xAA,
+        // ...
         /// Disable first PS/2 port
         DisableFirstPort = 0xAD,
         /// Enable first PS/2 port
@@ -108,34 +125,58 @@ mod dto {
     }
 
     /// The Status Register contains various flags that show the state of the PS/2 controller
+    #[derive(Copy, Clone)]
     pub struct StatusRegister(pub u8);
 
+    #[derive(Copy, Clone)]
     pub struct ControllerConfigurationByte(pub u8);
 }
 
 impl port::PortCommandRegister {
     const PORT: PortGeneric<u8, WriteOnlyAccess> = PortWriteOnly::<u8>::new(0x0064);
 
-    pub fn get_controller_configuration_byte() -> dto::ControllerConfigurationByte {
-        unsafe { Self::PORT.write(dto::Commands::ReadByte0.into()) };
-        let resp = port::PortDataPort::read().unwrap();
-        dto::ControllerConfigurationByte(resp)
-    }
-
-    pub fn set_controller_configuration_byte(config: dto::ControllerConfigurationByte) {
-        unsafe { Self::PORT.write(dto::Commands::WriteByte0.into()) };
-        port::PortDataPort::write(config.into());
-        // Response Byte: None
-    }
-
     pub fn disable_first_port() {
+        log::trace!(
+            "port_write(0x64, {:#02x})",
+            dto::Commands::DisableFirstPort as u8
+        );
         unsafe { Self::PORT.write(dto::Commands::DisableFirstPort.into()) };
         // Response Byte: None
     }
 
     pub fn disable_second_port() {
+        log::trace!(
+            "port_write(0x64, {:#02x})",
+            dto::Commands::DisableSecondPort as u8
+        );
         unsafe { Self::PORT.write(dto::Commands::DisableSecondPort.into()) };
         // Response Byte: None
+    }
+
+    pub fn get_controller_configuration_byte() -> dto::ControllerConfigurationByte {
+        log::trace!("port_write(0x64, {:#02x})", dto::Commands::ReadByte0 as u8);
+        unsafe { Self::PORT.write(dto::Commands::ReadByte0.into()) };
+        dto::ControllerConfigurationByte(port::PortDataPort::read().unwrap())
+    }
+
+    pub fn set_controller_configuration_byte(config: dto::ControllerConfigurationByte) {
+        log::trace!("port_write(0x64, {:#02x})", dto::Commands::WriteByte0 as u8);
+        unsafe { Self::PORT.write(dto::Commands::WriteByte0.into()) };
+        port::PortDataPort::write(config.into());
+        // Response Byte: None
+    }
+
+    pub fn test_controller() -> Result<(), ()> {
+        log::trace!(
+            "port_write(0x64, {:#02x})",
+            dto::Commands::TestController as u8
+        );
+        unsafe { Self::PORT.write(dto::Commands::TestController.into()) };
+        match port::PortDataPort::read().unwrap() {
+            0x55 => Ok(()),
+            0xFC => Err(()),
+            _ => Err(()),
+        }
     }
 }
 
@@ -143,10 +184,8 @@ impl port::PortStatusRegister {
     const PORT: PortGeneric<u8, ReadOnlyAccess> = PortReadOnly::<u8>::new(0x0064);
 
     pub fn read() -> dto::StatusRegister {
-        // log::trace!("read from port 0x0064");
-        let status = dto::StatusRegister(unsafe { Self::PORT.read() });
-        // log::debug!("{:?}", status);
-        status
+        log::trace!("port_read(0x64)");
+        dto::StatusRegister(unsafe { Self::PORT.read() })
     }
 }
 
@@ -156,6 +195,7 @@ impl port::PortDataPort {
     fn read() -> Option<u8> {
         // must be set before attempting to read data from IO port 0x60
         if port::PortStatusRegister::read().output_buffer_is_full() {
+            log::trace!("port_read(0x60)");
             Some(unsafe { Self::PORT.read() })
         } else {
             None
@@ -163,6 +203,7 @@ impl port::PortDataPort {
     }
 
     fn write(value: u8) {
+        log::trace!("port_write(0x60, {:#02x})", value);
         unsafe { Self::PORT.write(value) };
     }
 }
@@ -227,7 +268,6 @@ impl fmt::Debug for dto::StatusRegister {
     }
 }
 
-#[allow(dead_code)]
 impl dto::ControllerConfigurationByte {
     /// First PS/2 port interrupt (1 = enabled, 0 = disabled)
     pub fn first_port_interrupt_is_enable(&self) -> bool {
