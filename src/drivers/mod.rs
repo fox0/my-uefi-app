@@ -5,7 +5,8 @@ mod i8042;
 pub use i8042::I8042;
 
 pub trait Driver {
+    const DRIVER_NAME: &str;
     fn probe() -> Result<(), ()>;
-    fn init();
-    fn remove();
+    fn init(&mut self);
+    fn remove(&mut self);
 }

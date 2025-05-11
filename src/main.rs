@@ -29,9 +29,10 @@ fn main() -> Status {
     init_fadt();
 
     if I8042::probe().is_ok() {
-        I8042::init();
-
-        I8042::remove();
+        let mut i8042 = I8042::default();
+        i8042.init();
+        log::debug!("{:?}", i8042);
+        i8042.remove();
     };
 
     stall(Duration::from_secs(600));

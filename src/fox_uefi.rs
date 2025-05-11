@@ -16,6 +16,7 @@ pub fn rsdp_raw() -> Option<NonNull<Rsdp>> {
 
 pub fn init_acpi() {
     // log::trace!("init_acpi");
+
     let mut acpi_address = None;
 
     with_config_table(|slice: &[ConfigTableEntry]| {
