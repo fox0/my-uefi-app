@@ -115,8 +115,7 @@ dependencies = [
 [[package]]
 name = "uefi"
 version = "0.35.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "da7569ceafb898907ff764629bac90ac24ba4203c38c33ef79ee88c74aa35b11"
+source = "git+https://github.com/rust-osdev/uefi-rs#7ff771e641fa8060a909d854b65892d6d842200b"
 dependencies = [
  "bitflags",
  "cfg-if",

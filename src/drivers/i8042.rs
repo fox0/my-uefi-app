@@ -13,10 +13,7 @@ use bit_field::BitField;
 
 use super::Driver;
 use crate::fox_acpi::fadt_raw;
-use crate::fox_port::{
-    Port, PortGeneric, PortReadOnly, PortWriteOnly, ReadOnlyAccess, ReadWriteAccess,
-    WriteOnlyAccess,
-};
+use crate::fox_port::{PortGeneric, ReadOnlyAccess, ReadWriteAccess, WriteOnlyAccess};
 
 /// I8042 PS/2 Controller
 #[derive(Default, Debug)]
@@ -75,16 +72,16 @@ impl Driver for I8042 {
 
         // Step 3: Disable Devices
         // log::trace!("step 3");
-        port::PortCommandRegister::disable_port1();
-        port::PortCommandRegister::disable_port2();
+        disable_port1();
+        disable_port2();
 
         // Step 4: Flush The Output Buffer
         // log::trace!("step 4");
-        while port::PortDataPort::try_read().is_some() {}
+        while port_data_try_read().is_some() {}
 
         // Step 5: Set the Controller Configuration Byte
         // log::trace!("step 5");
-        self.config = port::PortCommandRegister::get_controller_configuration_byte();
+        self.config = get_controller_configuration_byte();
         // log::debug!("{:?}", self.config);
         assert!(self.config.system_flag());
         self.config.set_is_enable_interrupt1(false);
@@ -92,59 +89,60 @@ impl Driver for I8042 {
         self.config.set_is_disabled_clock1(true);
         self.config.set_is_disabled_clock2(true);
         self.config.set_is_enabled_translation1(false);
-        port::PortCommandRegister::set_controller_configuration_byte(self.config);
-        // let config = port::PortCommandRegister::get_controller_configuration_byte();
-        // log::debug!("{:?}", config);
+        set_controller_configuration_byte(self.config);
 
         // Step 6: Perform Controller Self Test
         // log::trace!("step 6");
-        port::PortCommandRegister::test_controller().expect("test failed");
+        if test_controller().is_err() {
+            log::warn!("{}: Test controller failed", I8042::DRIVER_NAME);
+            return;
+        }
         // This can reset the PS/2 controller on some hardware (tested on a 2016 laptop).
-        port::PortCommandRegister::set_controller_configuration_byte(self.config);
+        set_controller_configuration_byte(self.config);
 
         // Step 7: Determine If There Are 2 Channels
         // log::trace!("step 7");
         // пробуем включить порт 2
-        port::PortCommandRegister::enable_port2();
-        let cfg = port::PortCommandRegister::get_controller_configuration_byte();
+        enable_port2();
+        let cfg = get_controller_configuration_byte();
         if !cfg.is_disabled_clock2() {
             self.is_exists_port2 = true;
             // выключаем обратно
-            port::PortCommandRegister::disable_port2();
-            port::PortCommandRegister::set_controller_configuration_byte(self.config);
+            disable_port2();
+            set_controller_configuration_byte(self.config);
         }
 
         // Step 8: Perform Interface Tests
         // log::trace!("step 8");
         // At this stage, check to see how many PS/2 ports are left.
-        port::PortCommandRegister::test_port1().expect("test failed");
+        test_port1().expect("test failed");
         if self.is_exists_port2 {
-            port::PortCommandRegister::test_port2().expect("test failed");
+            test_port2().expect("test failed");
         }
 
         // Step 9: Enable Devices
         // log::trace!("step 9");
-        port::PortCommandRegister::enable_port1();
+        enable_port1();
         if self.is_exists_port2 {
-            port::PortCommandRegister::enable_port2();
+            enable_port2();
         }
 
         // Step 10: Reset Devices
         // log::trace!("step 10");
-        port::PortDataPort::reset(false).expect("reset failed");
+        reset_dev(false).expect("reset failed");
         if self.is_exists_port2 {
-            port::PortDataPort::reset(true).expect("reset failed");
+            reset_dev(true).expect("reset failed");
         }
 
         // Detecting PS/2 Device Types
         // log::trace!("step 11");
-        self.port1 = port::PortDataPort::get_dev_type(false);
+        self.port1 = get_dev_type(false);
         if let Some(dev) = &self.port1 {
             dev.log();
         }
 
         if self.is_exists_port2 {
-            self.port2 = port::PortDataPort::get_dev_type(true);
+            self.port2 = get_dev_type(true);
             if let Some(dev) = &self.port2 {
                 dev.log();
             }
@@ -158,10 +156,193 @@ impl Driver for I8042 {
     }
 }
 
-mod port {
-    pub struct PortCommandRegister;
-    pub struct PortStatusRegister;
-    pub struct PortDataPort;
+fn disable_port1() {
+    port_cmd_write(dto::ControllerCommands::DisablePort1);
+    // Response Byte: None
+}
+
+fn disable_port2() {
+    port_cmd_write(dto::ControllerCommands::DisablePort2);
+    // Response Byte: None
+}
+
+fn enable_port1() {
+    port_cmd_write(dto::ControllerCommands::EnablePort1);
+    // Response Byte: None
+}
+
+fn enable_port2() {
+    port_cmd_write(dto::ControllerCommands::EnablePort2);
+    // Response Byte: None
+}
+
+#[allow(clippy::let_and_return)]
+fn get_controller_configuration_byte() -> dto::ControllerConfigurationByte {
+    port_cmd_write(dto::ControllerCommands::ReadByte0);
+    // TODO spinlock
+    let config = dto::ControllerConfigurationByte(unsafe { port_data_read() });
+    // log::trace!("< {:?}", config);
+    config
+}
+
+fn set_controller_configuration_byte(config: dto::ControllerConfigurationByte) {
+    port_cmd_write(dto::ControllerCommands::WriteByte0);
+    // log::trace!("> {:?}", config);
+    port_data_write(config.into());
+    // Response Byte: None
+}
+
+fn test_controller() -> Result<(), ()> {
+    port_cmd_write(dto::ControllerCommands::TestController);
+    match unsafe { port_data_read() } {
+        0x55 => Ok(()),
+        0xFC => Err(()),
+        _ => Err(()),
+    }
+}
+
+fn test_port1() -> Result<(), ()> {
+    port_cmd_write(dto::ControllerCommands::TestPort1.into());
+    test_port()
+}
+
+fn test_port2() -> Result<(), ()> {
+    port_cmd_write(dto::ControllerCommands::TestPort2.into());
+    test_port()
+}
+
+fn test_port() -> Result<(), ()> {
+    match unsafe { port_data_read() } {
+        0x00 => Ok(()),
+        0x01 => Err(()), // clock line stuck
+        0x02 => Err(()), // clock line stuck high
+        0x03 => Err(()), // data line stuck low
+        0x04 => Err(()), // data line stuck high
+        _ => Err(()),
+    }
+}
+
+/// Reset Device
+fn reset_dev(is_port2: bool) -> Result<(), ()> {
+    send_to_device(is_port2, dto::DeviceCommands::Reset);
+    let resp1 = unsafe { port_data_read() };
+    let resp2 = unsafe { port_data_read() };
+    match (resp1, resp2) {
+        (0xFA, 0xAA) => Ok(()),
+        _ => Err(()),
+    }
+}
+
+/// Detecting PS/2 Device Types
+pub fn get_dev_type(is_port2: bool) -> Option<DeviceType> {
+    // log::trace!("PortDataPort::get_dev_type(is_port2={})", is_port2);
+
+    send_to_device(is_port2, dto::DeviceCommands::DisableScanning);
+    if unsafe { port_data_read() } != 0xFA {
+        // что-то с первого раза не работает...
+        send_to_device(is_port2, dto::DeviceCommands::DisableScanning);
+        if unsafe { port_data_read() } != 0xFA {
+            return None;
+        }
+    }
+    send_to_device(is_port2, dto::DeviceCommands::Identify);
+    if unsafe { port_data_read() } != 0xFA {
+        return None;
+    }
+
+    // Wait for the device to send up to 2 bytes of reply, with a time-out to determine when it's finished (e.g. in case it only sends 1 byte)
+    let resp1 = unsafe { port_data_read() };
+    let resp2 = port_data_try_read(); // TODO timeout
+    let result = match (resp1, resp2) {
+        (0x00, None) => Some(DeviceType::StandardMouse),
+        (0xAB, Some(0x83)) => Some(DeviceType::StandardKeyboard),
+        v => {
+            log::warn!(
+                "{}: Found unknown device {:#02X}, {:?}",
+                I8042::DRIVER_NAME,
+                v.0,
+                v.1
+            );
+            None
+        }
+    };
+
+    send_to_device(is_port2, dto::DeviceCommands::EnableScanning);
+    if unsafe { port_data_read() } != 0xFA {
+        // return None;
+    }
+
+    result
+}
+
+fn send_to_device(is_port2: bool, value: dto::DeviceCommands) {
+    if is_port2 {
+        port_cmd_write(dto::ControllerCommands::WriteByteInputPort2);
+    }
+    // log::trace!("> {:?}", value);
+    port_data_write(value.into());
+}
+
+// Ports
+
+const PORT_CMD: PortGeneric<u8, WriteOnlyAccess> = PortGeneric::new(0x0064);
+const PORT_STATUS: PortGeneric<u8, ReadOnlyAccess> = PortGeneric::new(0x0064);
+const PORT_DATA: PortGeneric<u8, ReadWriteAccess> = PortGeneric::new(0x0060);
+
+fn port_cmd_write(value: dto::ControllerCommands) {
+    let value = value.into();
+    // log::trace!("CMD> {:#02X}", value);
+    // SAFETY: trust me
+    unsafe { PORT_CMD.write(value) };
+}
+
+#[allow(clippy::let_and_return)]
+fn port_status_read() -> dto::StatusRegister {
+    // SAFETY: trust me
+    let value = unsafe { PORT_STATUS.read() };
+    // log::trace!("CMD< {:#02X}", value);
+    dto::StatusRegister(value)
+}
+
+unsafe fn port_data_read() -> u8 {
+    // TODO spinlock
+    let mut count = 0;
+    loop {
+        if let Some(value) = port_data_try_read() {
+            return value;
+        }
+        count += 1;
+        if count > 10 {
+            panic!("read_spinlock");
+        }
+    }
+}
+
+fn port_data_try_read() -> Option<u8> {
+    // must be set before attempting to read data from IO port 0x60
+    if port_status_read().output_buffer_is_full() {
+        let value = unsafe { PORT_DATA.read() };
+        // log::trace!("< {:#02X}", value);
+        Some(value)
+    } else {
+        None
+    }
+}
+
+fn port_data_write(value: u8) {
+    // TODO spinlock
+    let mut count = 0;
+    loop {
+        if !port_status_read().input_buffer_is_full() {
+            // log::trace!("> {:#02X}", value);
+            unsafe { PORT_DATA.write(value) };
+            break;
+        }
+        count += 1;
+        if count > 10 {
+            panic!("write_spinlock");
+        }
+    }
 }
 
 mod dto {
@@ -201,6 +382,7 @@ mod dto {
     #[derive(Copy, Clone, Debug)]
     pub enum DeviceCommands {
         Identify = 0xF2,
+        EnableScanning = 0xF4,
         DisableScanning = 0xF5,
         /// Reset command, supported by all PS/2 devices
         Reset = 0xFF,
@@ -212,192 +394,6 @@ mod dto {
 
     #[derive(Copy, Clone, Default)]
     pub struct ControllerConfigurationByte(pub u8);
-}
-
-#[allow(dead_code)]
-impl port::PortCommandRegister {
-    const PORT: PortGeneric<u8, WriteOnlyAccess> = PortWriteOnly::<u8>::new(0x0064);
-
-    pub fn disable_port1() {
-        Self::write(dto::ControllerCommands::DisablePort1.into());
-        // Response Byte: None
-    }
-
-    pub fn disable_port2() {
-        Self::write(dto::ControllerCommands::DisablePort2.into());
-        // Response Byte: None
-    }
-
-    pub fn enable_port1() {
-        Self::write(dto::ControllerCommands::EnablePort1.into());
-        // Response Byte: None
-    }
-
-    pub fn enable_port2() {
-        Self::write(dto::ControllerCommands::EnablePort2.into());
-        // Response Byte: None
-    }
-
-    #[allow(clippy::let_and_return)]
-    pub fn get_controller_configuration_byte() -> dto::ControllerConfigurationByte {
-        Self::write(dto::ControllerCommands::ReadByte0.into());
-        // TODO spinlock
-        let config = dto::ControllerConfigurationByte(unsafe { port::PortDataPort::read() });
-        // log::trace!("< {:?}", config);
-        config
-    }
-
-    pub fn set_controller_configuration_byte(config: dto::ControllerConfigurationByte) {
-        Self::write(dto::ControllerCommands::WriteByte0.into());
-        // log::trace!("> {:?}", config);
-        port::PortDataPort::write(config.into());
-        // Response Byte: None
-    }
-
-    pub fn test_controller() -> Result<(), ()> {
-        Self::write(dto::ControllerCommands::TestController.into());
-        match unsafe { port::PortDataPort::read() } {
-            0x55 => Ok(()),
-            0xFC => Err(()),
-            _ => Err(()),
-        }
-    }
-
-    pub fn test_port1() -> Result<(), ()> {
-        Self::write(dto::ControllerCommands::TestPort1.into());
-        Self::test_port()
-    }
-
-    pub fn test_port2() -> Result<(), ()> {
-        Self::write(dto::ControllerCommands::TestPort2.into());
-        Self::test_port()
-    }
-
-    fn test_port() -> Result<(), ()> {
-        match unsafe { port::PortDataPort::read() } {
-            0x00 => Ok(()),
-            0x01 => Err(()), // clock line stuck
-            0x02 => Err(()), // clock line stuck high
-            0x03 => Err(()), // data line stuck low
-            0x04 => Err(()), // data line stuck high
-            _ => Err(()),
-        }
-    }
-
-    fn write(value: u8) {
-        // log::trace!("CMD> {:#02X}", value);
-        unsafe { Self::PORT.write(value) };
-    }
-}
-
-impl port::PortStatusRegister {
-    const PORT: PortGeneric<u8, ReadOnlyAccess> = PortReadOnly::<u8>::new(0x0064);
-
-    #[allow(clippy::let_and_return)]
-    pub fn read() -> dto::StatusRegister {
-        let value = unsafe { Self::PORT.read() };
-        // log::trace!("CMD< {:#02X}", value);
-        dto::StatusRegister(value)
-    }
-}
-
-impl port::PortDataPort {
-    const PORT: PortGeneric<u8, ReadWriteAccess> = Port::<u8>::new(0x0060);
-
-    /// Reset Device
-    pub fn reset(is_port2: bool) -> Result<(), ()> {
-        Self::send_to_device(is_port2, dto::DeviceCommands::Reset);
-        let resp1 = unsafe { Self::read() };
-        let resp2 = unsafe { Self::read() };
-        match (resp1, resp2) {
-            (0xFA, 0xAA) => Ok(()),
-            _ => Err(()),
-        }
-    }
-
-    /// Detecting PS/2 Device Types
-    pub fn get_dev_type(is_port2: bool) -> Option<DeviceType> {
-        // log::trace!("PortDataPort::get_dev_type(is_port2={})", is_port2);
-
-        Self::send_to_device(is_port2, dto::DeviceCommands::DisableScanning);
-        if unsafe { Self::read() } != 0xFA {
-            // что-то с первого раза не работает...
-            Self::send_to_device(is_port2, dto::DeviceCommands::DisableScanning);
-            if unsafe { Self::read() } != 0xFA {
-                return None;
-            }
-        }
-        Self::send_to_device(is_port2, dto::DeviceCommands::Identify);
-        if unsafe { Self::read() } != 0xFA {
-            return None;
-        }
-
-        // Wait for the device to send up to 2 bytes of reply, with a time-out to determine when it's finished (e.g. in case it only sends 1 byte)
-        let resp1 = unsafe { Self::read() };
-        let resp2 = Self::try_read(); // TODO timeout
-        match (resp1, resp2) {
-            (0x00, None) => Some(DeviceType::StandardMouse),
-            (0xAB, Some(0x83)) => Some(DeviceType::StandardKeyboard),
-            v => {
-                log::warn!(
-                    "{}: Found unknown device {:#02X}, {:?}",
-                    I8042::DRIVER_NAME,
-                    v.0,
-                    v.1
-                );
-                None
-            }
-        }
-    }
-
-    fn send_to_device(is_port2: bool, value: dto::DeviceCommands) {
-        if is_port2 {
-            port::PortCommandRegister::write(dto::ControllerCommands::WriteByteInputPort2.into());
-        }
-        // log::trace!("> {:?}", value);
-        Self::write(value.into());
-    }
-
-    pub unsafe fn read() -> u8 {
-        // TODO spinlock
-        let mut count = 0;
-        loop {
-            if let Some(value) = Self::try_read() {
-                return value;
-            }
-            count += 1;
-            if count > 10 {
-                panic!("read_spinlock");
-            }
-        }
-    }
-
-    pub fn try_read() -> Option<u8> {
-        // must be set before attempting to read data from IO port 0x60
-        if port::PortStatusRegister::read().output_buffer_is_full() {
-            let value = unsafe { Self::PORT.read() };
-            // log::trace!("< {:#02X}", value);
-            Some(value)
-        } else {
-            None
-        }
-    }
-
-    pub fn write(value: u8) {
-        // TODO spinlock
-        let mut count = 0;
-        loop {
-            if !port::PortStatusRegister::read().input_buffer_is_full() {
-                // log::trace!("> {:#02X}", value);
-                unsafe { Self::PORT.write(value) };
-                break;
-            }
-            count += 1;
-            if count > 10 {
-                panic!("write_spinlock");
-            }
-        }
-    }
 }
 
 impl From<dto::ControllerCommands> for u8 {

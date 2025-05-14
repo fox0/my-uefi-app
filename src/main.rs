@@ -4,6 +4,7 @@
 
 use core::time::Duration;
 
+use uefi::boot::stall;
 use uefi::helpers::init;
 use uefi::{Status, entry, println};
 
@@ -15,11 +16,6 @@ mod drivers;
 mod fox_acpi;
 mod fox_port;
 mod fox_uefi;
-
-fn stall(duration: Duration) {
-    use uefi::boot::stall;
-    stall(duration.as_micros() as usize)
-}
 
 #[entry]
 fn main() -> Status {
