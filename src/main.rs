@@ -14,7 +14,6 @@ use crate::fox_uefi::init_acpi;
 
 mod drivers;
 mod fox_acpi;
-mod fox_port;
 mod fox_uefi;
 
 #[entry]

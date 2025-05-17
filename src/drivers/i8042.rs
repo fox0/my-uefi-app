@@ -10,10 +10,10 @@
 use core::fmt;
 
 use bit_field::BitField;
+use x86_64::instructions::port::{PortGeneric, ReadOnlyAccess, ReadWriteAccess, WriteOnlyAccess};
 
 use super::Driver;
 use crate::fox_acpi::fadt_raw;
-use crate::fox_port::{PortGeneric, ReadOnlyAccess, ReadWriteAccess, WriteOnlyAccess};
 
 /// I8042 PS/2 Controller
 #[derive(Default, Debug)]
@@ -28,7 +28,7 @@ pub struct I8042 {
 pub enum DeviceType {
     /// Standard PS/2 mouse
     StandardMouse,
-    /// MF2 keybaord
+    /// MF2 keyboard
     StandardKeyboard,
 }
 
@@ -202,12 +202,12 @@ fn test_controller() -> Result<(), ()> {
 }
 
 fn test_port1() -> Result<(), ()> {
-    port_cmd_write(dto::ControllerCommands::TestPort1.into());
+    port_cmd_write(dto::ControllerCommands::TestPort1);
     test_port()
 }
 
 fn test_port2() -> Result<(), ()> {
-    port_cmd_write(dto::ControllerCommands::TestPort2.into());
+    port_cmd_write(dto::ControllerCommands::TestPort2);
     test_port()
 }
 
@@ -289,17 +289,27 @@ const PORT_CMD: PortGeneric<u8, WriteOnlyAccess> = PortGeneric::new(0x0064);
 const PORT_STATUS: PortGeneric<u8, ReadOnlyAccess> = PortGeneric::new(0x0064);
 const PORT_DATA: PortGeneric<u8, ReadWriteAccess> = PortGeneric::new(0x0060);
 
+// ./cargo-asm asm --target x86_64-unknown-uefi my_uefi_app::drivers::i8042::port_cmd_write | grep port_cmd_write: -A10
+// my_uefi_app::drivers::i8042::port_cmd_write:
+//  mov     dx, 100
+//  #APP
+//  out     dx, al
+//  #NO_APP
+//  ret
+// #[inline(never)]
 fn port_cmd_write(value: dto::ControllerCommands) {
     let value = value.into();
     // log::trace!("CMD> {:#02X}", value);
+    let mut port_cmd = PORT_CMD;
     // SAFETY: trust me
-    unsafe { PORT_CMD.write(value) };
+    unsafe { port_cmd.write(value) };
 }
 
 #[allow(clippy::let_and_return)]
 fn port_status_read() -> dto::StatusRegister {
+    let mut port_status = PORT_STATUS;
     // SAFETY: trust me
-    let value = unsafe { PORT_STATUS.read() };
+    let value = unsafe { port_status.read() };
     // log::trace!("CMD< {:#02X}", value);
     dto::StatusRegister(value)
 }
@@ -321,7 +331,9 @@ unsafe fn port_data_read() -> u8 {
 fn port_data_try_read() -> Option<u8> {
     // must be set before attempting to read data from IO port 0x60
     if port_status_read().output_buffer_is_full() {
-        let value = unsafe { PORT_DATA.read() };
+        let mut port_data = PORT_DATA;
+        // SAFETY: trust me
+        let value = unsafe { port_data.read() };
         // log::trace!("< {:#02X}", value);
         Some(value)
     } else {
@@ -335,7 +347,9 @@ fn port_data_write(value: u8) {
     loop {
         if !port_status_read().input_buffer_is_full() {
             // log::trace!("> {:#02X}", value);
-            unsafe { PORT_DATA.write(value) };
+            let mut port_data = PORT_DATA;
+            // SAFETY: trust me
+            unsafe { port_data.write(value) };
             break;
         }
         count += 1;

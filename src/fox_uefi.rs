@@ -17,9 +17,8 @@ pub fn rsdp_raw() -> Option<NonNull<Rsdp>> {
 pub fn init_acpi() {
     // log::trace!("init_acpi");
 
-    let mut acpi_address = None;
-
-    with_config_table(|slice: &[ConfigTableEntry]| {
+    let acpi_address = with_config_table(|slice: &[ConfigTableEntry]| {
+        let mut acpi_address = None;
         for i in slice {
             match i.guid {
                 ConfigTableEntry::ACPI_GUID => {
@@ -38,6 +37,7 @@ pub fn init_acpi() {
                 }
             }
         }
+        acpi_address
     });
 
     let acpi_address = acpi_address.expect("ACPI not found");
